@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI EPUB Reader</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+    <header id="header">
+        <div class="header-content">
+            <h1>AI EPUB Reader</h1>
+            <input type="file" id="epubInput" accept=".epub">
+        </div>
+        <div id="loadingBar" class="loading-bar">
+            <div id="loadingProgress" class="loading-progress"></div>
+        </div>
+    </header>
+
+    <main id="content" class="content"></main>
+
+    <div id="popup" class="popup">
+        <div class="popup-header">
+            <button id="closePopup" class="close-btn">&times;</button>
+        </div>
+        <div id="popupContent" class="popup-content"></div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
