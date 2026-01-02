@@ -1,4 +1,4 @@
-const MISTRAL_API_KEY = 'YOUR_MISTRAL_API_KEY_HERE'; // Replace with your actual API key
+const MISTRAL_API_KEY = 'UyFZtjZY3r5aNe1th2qtx6IBLynCc0ai'; // Replace with your actual API key
 
 const WORD_THRESHOLD = 1000;
 let isBookLoaded = false;
@@ -60,23 +60,67 @@ async function processEPUB(file) {
     loadingProgress.style.width = '0%';
 
     try {
-        const arrayBuffer = await file.arrayBuffer();
+        // Use FileReader for better browser compatibility
+        const arrayBuffer = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = reject;
+            reader.readAsArrayBuffer(file);
+        });
         const zip = await JSZip.loadAsync(arrayBuffer);
 
-        loadingProgress.style.width = '30%';
+        loadingProgress.style.width = '20%';
 
+        // Extract all resources
         const htmlFiles = [];
-        zip.forEach((relativePath, file) => {
+        const cssFiles = {};
+        const imageFiles = {};
+
+        zip.forEach((relativePath, zipFile) => {
             if (relativePath.endsWith('.html') || relativePath.endsWith('.xhtml')) {
-                htmlFiles.push(file);
+                htmlFiles.push(zipFile);
+            } else if (relativePath.endsWith('.css')) {
+                cssFiles[relativePath] = zipFile;
+            } else if (relativePath.match(/\.(jpg|jpeg|png|gif|svg|webp)$/i)) {
+                imageFiles[relativePath] = zipFile;
             }
         });
 
+        loadingProgress.style.width = '40%';
+
+        // Load CSS files
+        const cssDataMap = {};
+        for (const [path, zipFile] of Object.entries(cssFiles)) {
+            const cssText = await zipFile.async('text');
+            const fileName = path.split('/').pop();
+            cssDataMap[fileName] = cssText;
+            cssDataMap[path] = cssText;
+        }
+
         loadingProgress.style.width = '50%';
 
+        // Load image files as data URLs
+        const imageDataMap = {};
+        for (const [path, zipFile] of Object.entries(imageFiles)) {
+            const blob = await zipFile.async('blob');
+            const dataUrl = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.readAsDataURL(blob);
+            });
+            const fileName = path.split('/').pop();
+            imageDataMap[fileName] = dataUrl;
+            imageDataMap[path] = dataUrl;
+            // Also handle paths with "images/" prefix
+            imageDataMap['images/' + fileName] = dataUrl;
+        }
+
+        loadingProgress.style.width = '60%';
+
+        // Load and combine HTML content
         let allContent = '';
-        for (const file of htmlFiles) {
-            const text = await file.async('text');
+        for (const htmlFile of htmlFiles) {
+            const text = await htmlFile.async('text');
             allContent += text;
         }
 
@@ -84,7 +128,36 @@ async function processEPUB(file) {
 
         const parser = new DOMParser();
         const doc = parser.parseFromString(allContent, 'text/html');
+
+        // Replace CSS links with inline styles
+        const linkTags = doc.querySelectorAll('link[rel="stylesheet"]');
+        linkTags.forEach(link => {
+            const href = link.getAttribute('href');
+            const fileName = href.split('/').pop();
+            if (cssDataMap[fileName] || cssDataMap[href]) {
+                const styleTag = doc.createElement('style');
+                styleTag.textContent = cssDataMap[fileName] || cssDataMap[href];
+                link.parentNode.replaceChild(styleTag, link);
+            } else {
+                link.remove(); // Remove broken CSS links
+            }
+        });
+
+        // Replace image sources with data URLs
+        const images = doc.querySelectorAll('img');
+        images.forEach(img => {
+            const src = img.getAttribute('src');
+            if (src) {
+                const fileName = src.split('/').pop();
+                if (imageDataMap[src] || imageDataMap[fileName]) {
+                    img.src = imageDataMap[src] || imageDataMap[fileName];
+                }
+            }
+        });
+
         const bodyContent = doc.body.innerHTML;
+
+        loadingProgress.style.width = '80%';
 
         content.innerHTML = '';
         const sections = divideSections(bodyContent);
@@ -151,6 +224,9 @@ async function getWordDefinition(word) {
 }
 
 async function getSectionSummary(text) {
+    if (!text || text.trim().length === 0) {
+        return 'No text available to summarize.';
+    }
     const truncatedText = text.substring(0, 5000);
     const prompt = `Summarize the following text in 7-8 sentences:\n\n${truncatedText}`;
     const systemPrompt = 'You are a helpful reading assistant. Provide clear, concise summaries.';
@@ -164,31 +240,46 @@ function divideSections(htmlContent) {
 
     let wordCount = 0;
     let sectionText = '';
-    const result = document.createElement('div');
+    const resultHTML = [];
 
-    function processNode(node) {
+    function getTextContent(node) {
+        let text = '';
+        if (node.nodeType === Node.TEXT_NODE) {
+            text = node.textContent;
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+            Array.from(node.childNodes).forEach(child => {
+                text += getTextContent(child);
+            });
+        }
+        return text;
+    }
+
+    function processNode(node, parent) {
         if (node.nodeType === Node.TEXT_NODE) {
             const words = node.textContent.split(/\s+/).filter(w => w.trim());
             wordCount += words.length;
             sectionText += node.textContent;
+
+            parent.appendChild(node.cloneNode(true));
 
             if (wordCount >= WORD_THRESHOLD) {
                 const trigger = document.createElement('div');
                 trigger.className = 'section-trigger';
                 trigger.textContent = '✦ ✦ ✦ ✦ ✦';
                 trigger.dataset.summaryText = sectionText;
-                result.appendChild(trigger);
+                parent.appendChild(trigger);
                 wordCount = 0;
                 sectionText = '';
             }
         } else if (node.nodeType === Node.ELEMENT_NODE) {
             const clone = node.cloneNode(false);
-            result.appendChild(clone);
-            Array.from(node.childNodes).forEach(child => processNode(child));
+            parent.appendChild(clone);
+            Array.from(node.childNodes).forEach(child => processNode(child, clone));
         }
     }
 
-    Array.from(tempDiv.childNodes).forEach(child => processNode(child));
+    const result = document.createElement('div');
+    Array.from(tempDiv.childNodes).forEach(child => processNode(child, result));
 
     return result.innerHTML;
 }
